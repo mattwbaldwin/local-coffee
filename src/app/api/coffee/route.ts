@@ -44,8 +44,6 @@ const KNOWN_CHAINS = [
   "costa",
   "pret a manger",
   "greggs",
-
-  // your reported misses
   "dunn brothers",
   "dunn brothers coffee",
   "holiday stationstores",
@@ -65,7 +63,6 @@ function isChainName(name: string): boolean {
   const n = normalize(name);
 
   if (KNOWN_CHAINS.some((c) => n.includes(normalize(c)))) {
-    // Make "holiday" exclusion more precise to avoid blocking unrelated "holiday" names
     if (
       n.includes("holiday") &&
       !(n.includes("station") || n.includes("store") || n.includes("gas") || n.includes("stationstores"))
@@ -75,7 +72,6 @@ function isChainName(name: string): boolean {
     return true;
   }
 
-  // Common store-number patterns
   if (/\b#\s?\d{2,}\b/.test(n)) return true;
   if (/\b(store|location)\b/.test(n) && /\b\d{2,}\b/.test(n)) return true;
 
@@ -105,15 +101,9 @@ async function sleep(ms: number) {
   return new Promise((res) => setTimeout(res, ms));
 }
 
-/**
- * Google Text Search returns ~20 results per page, with up to ~60 via next_page_token.
- * next_page_token typically requires a short delay before it's valid.
- */
 async function fetchTextSearchPages(baseUrl: URL, maxPages = 3): Promise<PlaceResult[]> {
   const all: PlaceResult[] = [];
   let page = 0;
-
-  // We mutate a working URL so we can add pagetoken on subsequent requests
   const workUrl = new URL(baseUrl.toString());
 
   while (page < maxPages) {
@@ -128,7 +118,6 @@ async function fetchTextSearchPages(baseUrl: URL, maxPages = 3): Promise<PlaceRe
     };
 
     if (data.status && data.status !== "OK" && data.status !== "ZERO_RESULTS") {
-      // stop early on API errors
       break;
     }
 
@@ -137,9 +126,7 @@ async function fetchTextSearchPages(baseUrl: URL, maxPages = 3): Promise<PlaceRe
     const token = data.next_page_token;
     if (!token) break;
 
-    // required delay before token becomes active
     await sleep(2000);
-
     workUrl.searchParams.set("pagetoken", token);
     page += 1;
   }
@@ -151,6 +138,7 @@ export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const latStr = searchParams.get("lat");
   const lngStr = searchParams.get("lng");
+  const radiusStr = searchParams.get("radiusMeters");
 
   if (!process.env.GOOGLE_PLACES_API_KEY) {
     return NextResponse.json({ error: "Missing GOOGLE_PLACES_API_KEY" }, { status: 500 });
@@ -165,8 +153,11 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "lat/lng must be valid numbers" }, { status: 400 });
   }
 
-  // Increased radius to improve recall in dense cities (NYC)
-  const radiusMeters = 5000;
+  // Default 5km; clamp to keep cost sane
+  const requested = radiusStr ? Number(radiusStr) : 5000;
+  const radiusMeters = Number.isFinite(requested)
+    ? Math.max(500, Math.min(20000, Math.round(requested)))
+    : 5000;
 
   const url = new URL("https://maps.googleapis.com/maps/api/place/textsearch/json");
   url.searchParams.set("query", "coffee shop");
@@ -176,15 +167,12 @@ export async function GET(req: Request) {
 
   const rawPages = await fetchTextSearchPages(url, 3);
 
-  // Deduplicate by place_id (pagination may overlap)
   const uniqueById = new Map<string, PlaceResult>();
   for (const p of rawPages) {
     if (p?.place_id && !uniqueById.has(p.place_id)) uniqueById.set(p.place_id, p);
   }
 
   const raw = Array.from(uniqueById.values());
-
-  // Local-only filter
   const filtered = raw.filter((p) => p.name && !isChainName(p.name));
 
   const items: CoffeeItem[] = filtered.map((p) => {
@@ -209,8 +197,7 @@ export async function GET(req: Request) {
     };
   });
 
-  // IMPORTANT: do not apply a hidden sort here; let the UI control sorting explicitly.
-  // We’ll still return a stable order (distance ascending) as a default fallback.
+  // Stable default order: distance
   items.sort((a, b) => (a.distanceMeters ?? 9e15) - (b.distanceMeters ?? 9e15));
 
   return NextResponse.json({
@@ -219,3 +206,4 @@ export async function GET(req: Request) {
     items: items.slice(0, 60),
   });
 }
+

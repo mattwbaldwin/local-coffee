@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 
 type CoffeeItem = {
   placeId: string;
@@ -15,10 +16,16 @@ type CoffeeItem = {
   mapsUrl: string;
 };
 
+const ResultsMap = dynamic(() => import("./components/ResultsMap"), { ssr: false });
+
 function metersToReadable(m: number | null): string {
   if (m == null) return "";
   if (m < 1000) return `${m} m`;
   return `${(m / 1000).toFixed(1)} km`;
+}
+
+function milesToMeters(mi: number) {
+  return Math.round(mi * 1609.344);
 }
 
 export default function Home() {
@@ -26,7 +33,16 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [items, setItems] = useState<CoffeeItem[]>([]);
+
   const [sortBy, setSortBy] = useState<"distance" | "rating">("distance");
+  const [view, setView] = useState<"list" | "map">("list");
+
+  // Radius slider in miles
+  const [radiusMiles, setRadiusMiles] = useState<number>(3.0);
+  const radiusMeters = useMemo(() => milesToMeters(radiusMiles), [radiusMiles]);
+
+  // Debounce refetch when slider changes (only after user stops moving it)
+  const debounceRef = useRef<number | null>(null);
 
   const headline = useMemo(() => {
     if (status === "locating") return "Getting your location…";
@@ -34,13 +50,12 @@ export default function Home() {
     return "Independent coffee nearby";
   }, [status]);
 
-  async function fetchCoffee(lat: number, lng: number) {
+  async function fetchCoffee(lat: number, lng: number, radiusM: number) {
     setStatus("loading");
     setError(null);
-    setItems([]);
 
     try {
-      const res = await fetch(`/api/coffee?lat=${lat}&lng=${lng}`);
+      const res = await fetch(`/api/coffee?lat=${lat}&lng=${lng}&radiusMeters=${radiusM}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error ?? "Request failed");
       setItems(data.items ?? []);
@@ -66,7 +81,7 @@ export default function Home() {
         const lat = pos.coords.latitude;
         const lng = pos.coords.longitude;
         setCoords({ lat, lng });
-        fetchCoffee(lat, lng);
+        fetchCoffee(lat, lng, radiusMeters);
       },
       (err) => {
         setStatus("error");
@@ -76,6 +91,22 @@ export default function Home() {
     );
   }
 
+  // When radius changes and we already have coords, refetch (debounced)
+  useEffect(() => {
+    if (!coords) return;
+    if (status === "locating") return;
+
+    if (debounceRef.current) window.clearTimeout(debounceRef.current);
+    debounceRef.current = window.setTimeout(() => {
+      fetchCoffee(coords.lat, coords.lng, radiusMeters);
+    }, 500);
+
+    return () => {
+      if (debounceRef.current) window.clearTimeout(debounceRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [radiusMeters]);
+
   const sortedItems = useMemo(() => {
     const arr = [...items];
 
@@ -84,7 +115,6 @@ export default function Home() {
       return arr;
     }
 
-    // Rating: higher rating first, then more reviews, then closer
     arr.sort((a, b) => {
       const ar = a.rating ?? 0;
       const br = b.rating ?? 0;
@@ -99,11 +129,6 @@ export default function Home() {
 
     return arr;
   }, [items, sortBy]);
-
-  useEffect(() => {
-    // optional auto-run:
-    // useMyLocation();
-  }, []);
 
   return (
     <main
@@ -123,7 +148,6 @@ export default function Home() {
 
         <p style={{ margin: 0, lineHeight: 1.4, color: "#cfcfcf" }}>
           Shows <strong>independent coffee shops only</strong>. Chains are intentionally excluded.
-          Tap to navigate in Google Maps.
         </p>
 
         <button
@@ -165,17 +189,10 @@ export default function Home() {
           </div>
         )}
 
-        {status === "ready" && items.length > 0 && (
+        {/* Controls */}
+        {coords && (
           <div style={{ display: "flex", gap: 10, marginTop: 10, flexWrap: "wrap" }}>
-            <label
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                gap: 6,
-                fontSize: 12,
-                color: "#bdbdbd",
-              }}
-            >
+            <label style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 12, color: "#bdbdbd" }}>
               Sort by
               <select
                 value={sortBy}
@@ -194,16 +211,45 @@ export default function Home() {
               </select>
             </label>
 
-            <div style={{ display: "flex", flexDirection: "column", justifyContent: "flex-end" }}>
-              <div style={{ fontSize: 12, color: "#9a9a9a" }}>
-                Showing {sortedItems.length} local results • Sorted by{" "}
-                {sortBy === "distance" ? "distance" : "rating"}
+            <label style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 12, color: "#bdbdbd" }}>
+              View
+              <select
+                value={view}
+                onChange={(e) => setView(e.target.value as "list" | "map")}
+                style={{
+                  padding: "10px 12px",
+                  borderRadius: 12,
+                  border: "1px solid #2a2a2a",
+                  background: "#1a1a1a",
+                  color: "#fff",
+                  fontSize: 14,
+                }}
+              >
+                <option value="list">List</option>
+                <option value="map">Map</option>
+              </select>
+            </label>
+
+            <label style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 12, color: "#bdbdbd", minWidth: 220 }}>
+              Radius: {radiusMiles.toFixed(1)} mi
+              <input
+                type="range"
+                min={0.5}
+                max={10}
+                step={0.5}
+                value={radiusMiles}
+                onChange={(e) => setRadiusMiles(Number(e.target.value))}
+                style={{ width: 220 }}
+              />
+              <div style={{ fontSize: 11, color: "#8f8f8f" }}>
+                Expanding radius increases coverage and API usage.
               </div>
-            </div>
+            </label>
           </div>
         )}
       </div>
 
+      {/* Results */}
       <div style={{ marginTop: 22, display: "flex", flexDirection: "column", gap: 12 }}>
         {status === "ready" && items.length === 0 && (
           <div
@@ -219,70 +265,66 @@ export default function Home() {
           </div>
         )}
 
-        {sortedItems.map((it) => (
-          <div
-            key={it.placeId}
-            style={{
-              padding: 16,
-              borderRadius: 16,
-              background: "#f7f7f7",
-              color: "#111",
-              border: "1px solid #e5e5e5",
-            }}
-          >
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-              <div style={{ fontSize: 16, fontWeight: 650 }}>{it.name}</div>
-              <div style={{ fontSize: 12, color: "#555" }}>{metersToReadable(it.distanceMeters)}</div>
-            </div>
-
+        {view === "map" && coords && sortedItems.length > 0 ? (
+          <ResultsMap userLat={coords.lat} userLng={coords.lng} items={sortedItems} />
+        ) : (
+          sortedItems.map((it) => (
             <div
+              key={it.placeId}
               style={{
-                marginTop: 6,
-                display: "flex",
-                gap: 12,
-                fontSize: 13,
-                color: "#333",
-                flexWrap: "wrap",
+                padding: 16,
+                borderRadius: 16,
+                background: "#f7f7f7",
+                color: "#111",
+                border: "1px solid #e5e5e5",
               }}
             >
-              {it.rating != null && (
-                <span>
-                  {it.rating.toFixed(1)} ★{it.ratingsTotal != null ? ` (${it.ratingsTotal})` : ""}
-                </span>
-              )}
-              {it.openNow != null && <span>{it.openNow ? "Open now" : "Closed"}</span>}
-            </div>
-
-            {it.address && (
-              <div style={{ marginTop: 6, fontSize: 13, color: "#444", lineHeight: 1.3 }}>
-                {it.address}
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+                <div style={{ fontSize: 16, fontWeight: 650 }}>{it.name}</div>
+                <div style={{ fontSize: 12, color: "#555" }}>{metersToReadable(it.distanceMeters)}</div>
               </div>
-            )}
 
-            <div style={{ marginTop: 10 }}>
-              <a
-                href={it.mapsUrl}
-                style={{
-                  display: "inline-block",
-                  padding: "10px 12px",
-                  borderRadius: 12,
-                  border: "1px solid #ccc",
-                  textDecoration: "none",
-                  color: "#111",
-                  fontSize: 14,
-                }}
-              >
-                Open in Google Maps
-              </a>
+              <div style={{ marginTop: 6, display: "flex", gap: 12, fontSize: 13, color: "#333", flexWrap: "wrap" }}>
+                {it.rating != null && (
+                  <span>
+                    {it.rating.toFixed(1)} ★{it.ratingsTotal != null ? ` (${it.ratingsTotal})` : ""}
+                  </span>
+                )}
+                {it.openNow != null && <span>{it.openNow ? "Open now" : "Closed"}</span>}
+              </div>
+
+              {it.address && (
+                <div style={{ marginTop: 6, fontSize: 13, color: "#444", lineHeight: 1.3 }}>
+                  {it.address}
+                </div>
+              )}
+
+              <div style={{ marginTop: 10 }}>
+                <a
+                  href={it.mapsUrl}
+                  style={{
+                    display: "inline-block",
+                    padding: "10px 12px",
+                    borderRadius: 12,
+                    border: "1px solid #ccc",
+                    textDecoration: "none",
+                    color: "#111",
+                    fontSize: 14,
+                  }}
+                >
+                  Open in Google Maps
+                </a>
+              </div>
             </div>
-          </div>
-        ))}
+          ))
+        )}
       </div>
 
       <footer style={{ marginTop: 26, fontSize: 12, color: "#888", lineHeight: 1.35 }}>
-        Data powered by Google Places. Chains are excluded by name heuristics; some false negatives may still occur.
+        Data powered by Google Places. Results are “local-only” via chain-name heuristics.
       </footer>
     </main>
   );
 }
+
 
