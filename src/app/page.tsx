@@ -22,12 +22,11 @@ function metersToReadable(m: number | null): string {
 }
 
 export default function Home() {
-  const [status, setStatus] = useState<
-    "idle" | "locating" | "loading" | "error" | "ready"
-  >("idle");
+  const [status, setStatus] = useState<"idle" | "locating" | "loading" | "error" | "ready">("idle");
   const [error, setError] = useState<string | null>(null);
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [items, setItems] = useState<CoffeeItem[]>([]);
+  const [sortBy, setSortBy] = useState<"distance" | "rating">("distance");
 
   const headline = useMemo(() => {
     if (status === "locating") return "Getting your location…";
@@ -77,8 +76,32 @@ export default function Home() {
     );
   }
 
+  const sortedItems = useMemo(() => {
+    const arr = [...items];
+
+    if (sortBy === "distance") {
+      arr.sort((a, b) => (a.distanceMeters ?? 9e15) - (b.distanceMeters ?? 9e15));
+      return arr;
+    }
+
+    // Rating: higher rating first, then more reviews, then closer
+    arr.sort((a, b) => {
+      const ar = a.rating ?? 0;
+      const br = b.rating ?? 0;
+      if (br !== ar) return br - ar;
+
+      const av = a.ratingsTotal ?? 0;
+      const bv = b.ratingsTotal ?? 0;
+      if (bv !== av) return bv - av;
+
+      return (a.distanceMeters ?? 9e15) - (b.distanceMeters ?? 9e15);
+    });
+
+    return arr;
+  }, [items, sortBy]);
+
   useEffect(() => {
-    // optional auto-run
+    // optional auto-run:
     // useMyLocation();
   }, []);
 
@@ -95,13 +118,12 @@ export default function Home() {
         color: "#f5f5f5",
       }}
     >
-      {/* Header */}
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         <h1 style={{ fontSize: 28, margin: 0 }}>{headline}</h1>
 
         <p style={{ margin: 0, lineHeight: 1.4, color: "#cfcfcf" }}>
-          Shows <strong>independent coffee shops only</strong>. Chains are intentionally
-          excluded. Tap to navigate in Google Maps.
+          Shows <strong>independent coffee shops only</strong>. Chains are intentionally excluded.
+          Tap to navigate in Google Maps.
         </p>
 
         <button
@@ -112,17 +134,11 @@ export default function Home() {
             padding: "14px 16px",
             borderRadius: 14,
             border: "1px solid #2a2a2a",
-            background:
-              status === "locating" || status === "loading"
-                ? "#2a2a2a"
-                : "#1a1a1a",
+            background: status === "locating" || status === "loading" ? "#2a2a2a" : "#1a1a1a",
             color: "#ffffff",
             fontSize: 16,
             textAlign: "left",
-            cursor:
-              status === "locating" || status === "loading"
-                ? "not-allowed"
-                : "pointer",
+            cursor: status === "locating" || status === "loading" ? "not-allowed" : "pointer",
           }}
         >
           Use my location
@@ -148,17 +164,47 @@ export default function Home() {
             {error}
           </div>
         )}
+
+        {status === "ready" && items.length > 0 && (
+          <div style={{ display: "flex", gap: 10, marginTop: 10, flexWrap: "wrap" }}>
+            <label
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 6,
+                fontSize: 12,
+                color: "#bdbdbd",
+              }}
+            >
+              Sort by
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as "distance" | "rating")}
+                style={{
+                  padding: "10px 12px",
+                  borderRadius: 12,
+                  border: "1px solid #2a2a2a",
+                  background: "#1a1a1a",
+                  color: "#fff",
+                  fontSize: 14,
+                }}
+              >
+                <option value="distance">Distance (closest)</option>
+                <option value="rating">Rating (best)</option>
+              </select>
+            </label>
+
+            <div style={{ display: "flex", flexDirection: "column", justifyContent: "flex-end" }}>
+              <div style={{ fontSize: 12, color: "#9a9a9a" }}>
+                Showing {sortedItems.length} local results • Sorted by{" "}
+                {sortBy === "distance" ? "distance" : "rating"}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* Results */}
-      <div
-        style={{
-          marginTop: 22,
-          display: "flex",
-          flexDirection: "column",
-          gap: 12,
-        }}
-      >
+      <div style={{ marginTop: 22, display: "flex", flexDirection: "column", gap: 12 }}>
         {status === "ready" && items.length === 0 && (
           <div
             style={{
@@ -173,7 +219,7 @@ export default function Home() {
           </div>
         )}
 
-        {items.map((it) => (
+        {sortedItems.map((it) => (
           <div
             key={it.placeId}
             style={{
@@ -184,17 +230,9 @@ export default function Home() {
               border: "1px solid #e5e5e5",
             }}
           >
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                gap: 12,
-              }}
-            >
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
               <div style={{ fontSize: 16, fontWeight: 650 }}>{it.name}</div>
-              <div style={{ fontSize: 12, color: "#555" }}>
-                {metersToReadable(it.distanceMeters)}
-              </div>
+              <div style={{ fontSize: 12, color: "#555" }}>{metersToReadable(it.distanceMeters)}</div>
             </div>
 
             <div
@@ -209,24 +247,14 @@ export default function Home() {
             >
               {it.rating != null && (
                 <span>
-                  {it.rating.toFixed(1)} ★
-                  {it.ratingsTotal != null ? ` (${it.ratingsTotal})` : ""}
+                  {it.rating.toFixed(1)} ★{it.ratingsTotal != null ? ` (${it.ratingsTotal})` : ""}
                 </span>
               )}
-              {it.openNow != null && (
-                <span>{it.openNow ? "Open now" : "Closed"}</span>
-              )}
+              {it.openNow != null && <span>{it.openNow ? "Open now" : "Closed"}</span>}
             </div>
 
             {it.address && (
-              <div
-                style={{
-                  marginTop: 6,
-                  fontSize: 13,
-                  color: "#444",
-                  lineHeight: 1.3,
-                }}
-              >
+              <div style={{ marginTop: 6, fontSize: 13, color: "#444", lineHeight: 1.3 }}>
                 {it.address}
               </div>
             )}
@@ -251,17 +279,10 @@ export default function Home() {
         ))}
       </div>
 
-      <footer
-        style={{
-          marginTop: 26,
-          fontSize: 12,
-          color: "#888",
-          lineHeight: 1.35,
-        }}
-      >
-        Data powered by Google Places. Chain detection is best-effort and intentionally
-        biased toward excluding obvious chains.
+      <footer style={{ marginTop: 26, fontSize: 12, color: "#888", lineHeight: 1.35 }}>
+        Data powered by Google Places. Chains are excluded by name heuristics; some false negatives may still occur.
       </footer>
     </main>
   );
 }
+

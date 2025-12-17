@@ -44,16 +44,38 @@ const KNOWN_CHAINS = [
   "costa",
   "pret a manger",
   "greggs",
+
+  // your reported misses
+  "dunn brothers",
+  "dunn brothers coffee",
+  "holiday stationstores",
+  "holiday station store",
+  "holiday",
 ];
 
 function normalize(s: string): string {
-  return s.toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+  return s
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function isChainName(name: string): boolean {
   const n = normalize(name);
-  if (KNOWN_CHAINS.some((c) => n.includes(normalize(c)))) return true;
 
+  if (KNOWN_CHAINS.some((c) => n.includes(normalize(c)))) {
+    // Make "holiday" exclusion more precise to avoid blocking unrelated "holiday" names
+    if (
+      n.includes("holiday") &&
+      !(n.includes("station") || n.includes("store") || n.includes("gas") || n.includes("stationstores"))
+    ) {
+      return false;
+    }
+    return true;
+  }
+
+  // Common store-number patterns
   if (/\b#\s?\d{2,}\b/.test(n)) return true;
   if (/\b(store|location)\b/.test(n) && /\b\d{2,}\b/.test(n)) return true;
 
@@ -79,6 +101,52 @@ function mapsDeepLinkFromPlaceId(placeId: string): string {
   return url.toString();
 }
 
+async function sleep(ms: number) {
+  return new Promise((res) => setTimeout(res, ms));
+}
+
+/**
+ * Google Text Search returns ~20 results per page, with up to ~60 via next_page_token.
+ * next_page_token typically requires a short delay before it's valid.
+ */
+async function fetchTextSearchPages(baseUrl: URL, maxPages = 3): Promise<PlaceResult[]> {
+  const all: PlaceResult[] = [];
+  let page = 0;
+
+  // We mutate a working URL so we can add pagetoken on subsequent requests
+  const workUrl = new URL(baseUrl.toString());
+
+  while (page < maxPages) {
+    const r = await fetch(workUrl.toString(), { method: "GET" });
+    if (!r.ok) break;
+
+    const data = (await r.json()) as {
+      status?: string;
+      results?: PlaceResult[];
+      next_page_token?: string;
+      error_message?: string;
+    };
+
+    if (data.status && data.status !== "OK" && data.status !== "ZERO_RESULTS") {
+      // stop early on API errors
+      break;
+    }
+
+    all.push(...(data.results ?? []));
+
+    const token = data.next_page_token;
+    if (!token) break;
+
+    // required delay before token becomes active
+    await sleep(2000);
+
+    workUrl.searchParams.set("pagetoken", token);
+    page += 1;
+  }
+
+  return all;
+}
+
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const latStr = searchParams.get("lat");
@@ -97,31 +165,26 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "lat/lng must be valid numbers" }, { status: 400 });
   }
 
+  // Increased radius to improve recall in dense cities (NYC)
+  const radiusMeters = 5000;
+
   const url = new URL("https://maps.googleapis.com/maps/api/place/textsearch/json");
   url.searchParams.set("query", "coffee shop");
   url.searchParams.set("location", `${lat},${lng}`);
-  url.searchParams.set("radius", "3000");
+  url.searchParams.set("radius", String(radiusMeters));
   url.searchParams.set("key", process.env.GOOGLE_PLACES_API_KEY);
 
-  const r = await fetch(url.toString(), { method: "GET" });
-  if (!r.ok) {
-    return NextResponse.json({ error: "Places request failed" }, { status: 502 });
+  const rawPages = await fetchTextSearchPages(url, 3);
+
+  // Deduplicate by place_id (pagination may overlap)
+  const uniqueById = new Map<string, PlaceResult>();
+  for (const p of rawPages) {
+    if (p?.place_id && !uniqueById.has(p.place_id)) uniqueById.set(p.place_id, p);
   }
 
-  const data = (await r.json()) as {
-    status?: string;
-    results?: PlaceResult[];
-    error_message?: string;
-  };
+  const raw = Array.from(uniqueById.values());
 
-  if (data.status && data.status !== "OK" && data.status !== "ZERO_RESULTS") {
-    return NextResponse.json(
-      { error: "Places API error", status: data.status, message: data.error_message ?? null },
-      { status: 502 }
-    );
-  }
-
-  const raw = data.results ?? [];
+  // Local-only filter
   const filtered = raw.filter((p) => p.name && !isChainName(p.name));
 
   const items: CoffeeItem[] = filtered.map((p) => {
@@ -146,26 +209,13 @@ export async function GET(req: Request) {
     };
   });
 
-  items.sort((a, b) => {
-    const ad = a.distanceMeters ?? Number.MAX_SAFE_INTEGER;
-    const bd = b.distanceMeters ?? Number.MAX_SAFE_INTEGER;
+  // IMPORTANT: do not apply a hidden sort here; let the UI control sorting explicitly.
+  // We’ll still return a stable order (distance ascending) as a default fallback.
+  items.sort((a, b) => (a.distanceMeters ?? 9e15) - (b.distanceMeters ?? 9e15));
 
-    const bucket = (m: number) => (m < 500 ? 0 : m < 1200 ? 1 : m < 2500 ? 2 : 3);
-    const ab = bucket(ad);
-    const bb = bucket(bd);
-    if (ab !== bb) return ab - bb;
-
-    const ar = a.rating ?? 0;
-    const br = b.rating ?? 0;
-    const av = Math.log10((a.ratingsTotal ?? 0) + 1);
-    const bv = Math.log10((b.ratingsTotal ?? 0) + 1);
-
-    const aScore = ar * 2 + av;
-    const bScore = br * 2 + bv;
-
-    if (bScore !== aScore) return bScore - aScore;
-    return ad - bd;
+  return NextResponse.json({
+    radiusMeters,
+    returned: items.length,
+    items: items.slice(0, 60),
   });
-
-  return NextResponse.json({ items: items.slice(0, 20) });
 }
