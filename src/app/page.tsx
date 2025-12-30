@@ -191,89 +191,110 @@ export default function Home() {
           </div>
         )}
 
-        {/* Controls */}
-        {coords && (
-          <div style={{ display: "flex", gap: 10, marginTop: 10, flexWrap: "wrap" }}>
-            <label
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                gap: 6,
-                fontSize: 12,
-                color: "#bdbdbd",
-              }}
-            >
-              Sort by
-              <select
-                value={sortBy}
-                onChange={(e) => setSortBy(e.target.value as "distance" | "rating")}
-                style={{
-                  padding: "10px 12px",
-                  borderRadius: 12,
-                  border: "1px solid #2a2a2a",
-                  background: "#1a1a1a",
-                  color: "#fff",
-                  fontSize: 14,
-                }}
-              >
-                <option value="distance">Distance (closest)</option>
-                <option value="rating">Rating (best)</option>
-              </select>
-            </label>
+{/* Controls */}
+{coords && (
+  <div style={{ display: "flex", gap: 10, marginTop: 10, flexWrap: "wrap" }}>
+    <label
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 6,
+        fontSize: 12,
+        color: "#bdbdbd",
+      }}
+    >
+      Sort by
+      <select
+        value={sortBy}
+        onChange={(e) => setSortBy(e.target.value as "distance" | "rating")}
+        style={{
+          padding: "10px 12px",
+          borderRadius: 12,
+          border: "1px solid #2a2a2a",
+          background: "#1a1a1a",
+          color: "#fff",
+          fontSize: 14,
+        }}
+      >
+        <option value="distance">Distance (closest)</option>
+        <option value="rating">Rating (best)</option>
+      </select>
+    </label>
 
-            <label
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                gap: 6,
-                fontSize: 12,
-                color: "#bdbdbd",
-              }}
-            >
-              View
-              <select
-                value={view}
-                onChange={(e) => setView(e.target.value as "list" | "map")}
-                style={{
-                  padding: "10px 12px",
-                  borderRadius: 12,
-                  border: "1px solid #2a2a2a",
-                  background: "#1a1a1a",
-                  color: "#fff",
-                  fontSize: 14,
-                }}
-              >
-                <option value="list">List</option>
-                <option value="map">Map</option>
-              </select>
-            </label>
+    <label
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 6,
+        fontSize: 12,
+        color: "#bdbdbd",
+      }}
+    >
+      View
+      <select
+        value={view}
+        onChange={(e) => setView(e.target.value as "list" | "map")}
+        style={{
+          padding: "10px 12px",
+          borderRadius: 12,
+          border: "1px solid #2a2a2a",
+          background: "#1a1a1a",
+          color: "#fff",
+          fontSize: 14,
+        }}
+      >
+        <option value="list">List</option>
+        <option value="map">Map</option>
+      </select>
+    </label>
 
-            <label
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                gap: 6,
-                fontSize: 12,
-                color: "#bdbdbd",
-                minWidth: 240,
-              }}
-            >
-              Radius: {radiusMiles.toFixed(0)} mi
-              <input
-                type="range"
-                min={1}
-                max={60}
-                step={1}
-                value={radiusMiles}
-                onChange={(e) => setRadiusMiles(Number(e.target.value))}
-                style={{ width: 240 }}
-              />
-              <div style={{ fontSize: 11, color: "#8f8f8f" }}>
-                Expanding radius increases coverage and API usage.
-              </div>
-            </label>
-          </div>
-        )}
+    <label
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 6,
+        fontSize: 12,
+        color: "#bdbdbd",
+        minWidth: 240,
+      }}
+    >
+      Radius: {radiusMiles.toFixed(0)} mi
+      <input
+        type="range"
+        min={1}
+        max={60}
+        step={1}
+        value={radiusMiles}
+        onChange={(e) => setRadiusMiles(Number(e.target.value))}
+        style={{ width: 240 }}
+      />
+      <div style={{ fontSize: 11, color: "#8f8f8f" }}>
+        Expanding radius increases coverage and API usage.
+      </div>
+    </label>
+
+    {/* Report link (more visible here than at the bottom) */}
+    <div
+      style={{
+        alignSelf: "flex-end",
+        fontSize: 12,
+        color: "#9a9a9a",
+        marginLeft: "auto",
+        paddingBottom: 2,
+      }}
+    >
+      Something missing or wrong?{" "}
+      <a
+        href="PASTE_YOUR_GOOGLE_FORM_URL_HERE"
+        target="_blank"
+        rel="noreferrer"
+        style={{ color: "#f5f5f5", textDecoration: "underline" }}
+      >
+        Report it
+      </a>
+    </div>
+  </div>
+)}
       </div>
 
       {/* Results */}
@@ -360,17 +381,7 @@ export default function Home() {
 
       <footer style={{ marginTop: 26, fontSize: 12, color: "#888", lineHeight: 1.35 }}>
         Data powered by Google Places. Results are “local-only” via chain-name heuristics.
-        <div style={{ marginTop: 8 }}>
-          Something off (missing a local shop or a chain slipped through)?{" "}
-          <a
-            href="PASTE_YOUR_REPORT_FORM_LINK_HERE"
-            target="_blank"
-            rel="noreferrer"
-            style={{ color: "#f5f5f5", textDecoration: "underline" }}
-          >
-            Report it
-          </a>
-        </div>
+       
       </footer>
     </main>
   );
