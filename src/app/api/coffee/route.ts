@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { Ratelimit } from "@upstash/ratelimit";
+import { Redis } from "@upstash/redis";
 
 type PlaceResult = {
   place_id: string;
@@ -63,6 +65,7 @@ function isChainName(name: string): boolean {
   const n = normalize(name);
 
   if (KNOWN_CHAINS.some((c) => n.includes(normalize(c)))) {
+    // Special-case: "Holiday" alone might be a local business name, but Holiday gas/store is a chain.
     if (
       n.includes("holiday") &&
       !(n.includes("station") || n.includes("store") || n.includes("gas") || n.includes("stationstores"))
@@ -72,6 +75,7 @@ function isChainName(name: string): boolean {
     return true;
   }
 
+  // Heuristic patterns that often indicate chains
   if (/\b#\s?\d{2,}\b/.test(n)) return true;
   if (/\b(store|location)\b/.test(n) && /\b\d{2,}\b/.test(n)) return true;
 
@@ -126,6 +130,7 @@ async function fetchTextSearchPages(baseUrl: URL, maxPages = 3): Promise<PlaceRe
     const token = data.next_page_token;
     if (!token) break;
 
+    // Google says next_page_token may take a moment to become valid
     await sleep(2000);
     workUrl.searchParams.set("pagetoken", token);
     page += 1;
@@ -134,8 +139,30 @@ async function fetchTextSearchPages(baseUrl: URL, maxPages = 3): Promise<PlaceRe
   return all;
 }
 
+// ----- Rate limiting (Upstash) -----
+const redis = Redis.fromEnv();
+const ratelimit = new Ratelimit({
+  redis,
+  limiter: Ratelimit.slidingWindow(30, "1 m"), // 30 req/min per IP
+});
+
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
+
+  // Rate limit early
+  const ip =
+    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
+    req.headers.get("x-real-ip") ??
+    "unknown";
+
+  const { success } = await ratelimit.limit(`coffee:${ip}`);
+  if (!success) {
+    return NextResponse.json(
+      { error: "Rate limit exceeded. Try again in a minute." },
+      { status: 429 }
+    );
+  }
+
   const latStr = searchParams.get("lat");
   const lngStr = searchParams.get("lng");
   const radiusStr = searchParams.get("radiusMeters");
@@ -153,10 +180,10 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "lat/lng must be valid numbers" }, { status: 400 });
   }
 
-  // Default 5km; clamp to keep cost sane
+  // Default 5km; clamp up to 100km (~62 miles)
   const requested = radiusStr ? Number(radiusStr) : 5000;
   const radiusMeters = Number.isFinite(requested)
-    ? Math.max(500, Math.min(20000, Math.round(requested)))
+    ? Math.max(500, Math.min(100000, Math.round(requested)))
     : 5000;
 
   const url = new URL("https://maps.googleapis.com/maps/api/place/textsearch/json");
