@@ -37,11 +37,11 @@ export default function Home() {
   const [sortBy, setSortBy] = useState<"distance" | "rating">("distance");
   const [view, setView] = useState<"list" | "map">("list");
 
-  // Radius slider in miles
-  const [radiusMiles, setRadiusMiles] = useState<number>(3.0);
+  // Radius slider in miles (now up to 60)
+  const [radiusMiles, setRadiusMiles] = useState<number>(3);
   const radiusMeters = useMemo(() => milesToMeters(radiusMiles), [radiusMiles]);
 
-  // Debounce refetch when slider changes (only after user stops moving it)
+  // Debounce refetch when slider changes
   const debounceRef = useRef<number | null>(null);
 
   const headline = useMemo(() => {
@@ -53,6 +53,7 @@ export default function Home() {
   async function fetchCoffee(lat: number, lng: number, radiusM: number) {
     setStatus("loading");
     setError(null);
+    setView("list"); // FIX: ensure list shows by default after each fetch
 
     try {
       const res = await fetch(`/api/coffee?lat=${lat}&lng=${lng}&radiusMeters=${radiusM}`);
@@ -115,6 +116,7 @@ export default function Home() {
       return arr;
     }
 
+    // rating sort (tie-break by ratingsTotal, then distance)
     arr.sort((a, b) => {
       const ar = a.rating ?? 0;
       const br = b.rating ?? 0;
@@ -192,7 +194,15 @@ export default function Home() {
         {/* Controls */}
         {coords && (
           <div style={{ display: "flex", gap: 10, marginTop: 10, flexWrap: "wrap" }}>
-            <label style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 12, color: "#bdbdbd" }}>
+            <label
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 6,
+                fontSize: 12,
+                color: "#bdbdbd",
+              }}
+            >
               Sort by
               <select
                 value={sortBy}
@@ -211,7 +221,15 @@ export default function Home() {
               </select>
             </label>
 
-            <label style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 12, color: "#bdbdbd" }}>
+            <label
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 6,
+                fontSize: 12,
+                color: "#bdbdbd",
+              }}
+            >
               View
               <select
                 value={view}
@@ -230,16 +248,25 @@ export default function Home() {
               </select>
             </label>
 
-            <label style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 12, color: "#bdbdbd", minWidth: 220 }}>
-              Radius: {radiusMiles.toFixed(1)} mi
+            <label
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 6,
+                fontSize: 12,
+                color: "#bdbdbd",
+                minWidth: 240,
+              }}
+            >
+              Radius: {radiusMiles.toFixed(0)} mi
               <input
                 type="range"
-                min={0.5}
-                max={10}
-                step={0.5}
+                min={1}
+                max={60}
+                step={1}
                 value={radiusMiles}
                 onChange={(e) => setRadiusMiles(Number(e.target.value))}
-                style={{ width: 220 }}
+                style={{ width: 240 }}
               />
               <div style={{ fontSize: 11, color: "#8f8f8f" }}>
                 Expanding radius increases coverage and API usage.
@@ -281,10 +308,21 @@ export default function Home() {
             >
               <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
                 <div style={{ fontSize: 16, fontWeight: 650 }}>{it.name}</div>
-                <div style={{ fontSize: 12, color: "#555" }}>{metersToReadable(it.distanceMeters)}</div>
+                <div style={{ fontSize: 12, color: "#555" }}>
+                  {metersToReadable(it.distanceMeters)}
+                </div>
               </div>
 
-              <div style={{ marginTop: 6, display: "flex", gap: 12, fontSize: 13, color: "#333", flexWrap: "wrap" }}>
+              <div
+                style={{
+                  marginTop: 6,
+                  display: "flex",
+                  gap: 12,
+                  fontSize: 13,
+                  color: "#333",
+                  flexWrap: "wrap",
+                }}
+              >
                 {it.rating != null && (
                   <span>
                     {it.rating.toFixed(1)} ★{it.ratingsTotal != null ? ` (${it.ratingsTotal})` : ""}
@@ -322,9 +360,18 @@ export default function Home() {
 
       <footer style={{ marginTop: 26, fontSize: 12, color: "#888", lineHeight: 1.35 }}>
         Data powered by Google Places. Results are “local-only” via chain-name heuristics.
+        <div style={{ marginTop: 8 }}>
+          Something off (missing a local shop or a chain slipped through)?{" "}
+          <a
+            href="PASTE_YOUR_REPORT_FORM_LINK_HERE"
+            target="_blank"
+            rel="noreferrer"
+            style={{ color: "#f5f5f5", textDecoration: "underline" }}
+          >
+            Report it
+          </a>
+        </div>
       </footer>
     </main>
   );
 }
-
-
