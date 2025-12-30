@@ -20,8 +20,12 @@ const ResultsMap = dynamic(() => import("./components/ResultsMap"), { ssr: false
 
 function metersToReadable(m: number | null): string {
   if (m == null) return "";
-  if (m < 1000) return `${m} m`;
-  return `${(m / 1000).toFixed(1)} km`;
+
+  const feet = m * 3.28084;
+  if (feet < 1000) return `${Math.round(feet)} ft`;
+
+  const miles = m / 1609.344;
+  return `${miles.toFixed(1)} mi`;
 }
 
 function milesToMeters(mi: number) {

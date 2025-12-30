@@ -53,6 +53,21 @@ const KNOWN_CHAINS = [
   "holiday",
 ];
 
+const COFFEE_HINTS = [
+  "coffee",
+  "cafe",
+  "espresso",
+  "roaster",
+  "roasters",
+  "roastery",
+  "roasting",
+  "latte",
+  "pour over",
+  "pour-over",
+  "cold brew",
+  "cold-brew",
+];
+
 function normalize(s: string): string {
   return s
     .toLowerCase()
@@ -65,7 +80,7 @@ function isChainName(name: string): boolean {
   const n = normalize(name);
 
   if (KNOWN_CHAINS.some((c) => n.includes(normalize(c)))) {
-    // Special-case: "Holiday" alone might be a local business name, but Holiday gas/store is a chain.
+    // Special-case: "Holiday" alone is ambiguous (could be "Holiday Cafe")
     if (
       n.includes("holiday") &&
       !(n.includes("station") || n.includes("store") || n.includes("gas") || n.includes("stationstores"))
@@ -75,11 +90,16 @@ function isChainName(name: string): boolean {
     return true;
   }
 
-  // Heuristic patterns that often indicate chains
+  // Heuristics for multi-location naming patterns
   if (/\b#\s?\d{2,}\b/.test(n)) return true;
   if (/\b(store|location)\b/.test(n) && /\b\d{2,}\b/.test(n)) return true;
 
   return false;
+}
+
+function looksLikeCoffeePlace(name: string): boolean {
+  const n = normalize(name);
+  return COFFEE_HINTS.some((w) => n.includes(normalize(w)));
 }
 
 function haversineMeters(lat1: number, lon1: number, lat2: number, lon2: number): number {
@@ -105,7 +125,11 @@ async function sleep(ms: number) {
   return new Promise((res) => setTimeout(res, ms));
 }
 
-async function fetchTextSearchPages(baseUrl: URL, maxPages = 3): Promise<PlaceResult[]> {
+/**
+ * Google Places Nearby Search can return up to ~60 results via pagination tokens.
+ * next_page_token becomes valid after a short delay.
+ */
+async function fetchNearbySearchPages(baseUrl: URL, maxPages = 3): Promise<PlaceResult[]> {
   const all: PlaceResult[] = [];
   let page = 0;
   const workUrl = new URL(baseUrl.toString());
@@ -130,7 +154,7 @@ async function fetchTextSearchPages(baseUrl: URL, maxPages = 3): Promise<PlaceRe
     const token = data.next_page_token;
     if (!token) break;
 
-    // Google says next_page_token may take a moment to become valid
+    // Token needs time to activate
     await sleep(2000);
     workUrl.searchParams.set("pagetoken", token);
     page += 1;
@@ -139,30 +163,39 @@ async function fetchTextSearchPages(baseUrl: URL, maxPages = 3): Promise<PlaceRe
   return all;
 }
 
-// ----- Rate limiting (Upstash) -----
-const redis = Redis.fromEnv();
-const ratelimit = new Ratelimit({
-  redis,
-  limiter: Ratelimit.slidingWindow(30, "1 m"), // 30 req/min per IP
-});
+/**
+ * OPTIONAL rate limiting:
+ * - Works on Vercel if you set UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN
+ * - Does nothing locally if those vars are missing
+ */
+const hasUpstash =
+  !!process.env.UPSTASH_REDIS_REST_URL && !!process.env.UPSTASH_REDIS_REST_TOKEN;
+
+const ratelimit = hasUpstash
+  ? new Ratelimit({
+      redis: Redis.fromEnv(),
+      limiter: Ratelimit.slidingWindow(30, "1 m"),
+    })
+  : null;
 
 export async function GET(req: Request) {
-  const { searchParams } = new URL(req.url);
+  // Rate limit early (only if Upstash env vars exist)
+  if (ratelimit) {
+    const ip =
+      req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
+      req.headers.get("x-real-ip") ??
+      "unknown";
 
-  // Rate limit early
-  const ip =
-    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
-    req.headers.get("x-real-ip") ??
-    "unknown";
-
-  const { success } = await ratelimit.limit(`coffee:${ip}`);
-  if (!success) {
-    return NextResponse.json(
-      { error: "Rate limit exceeded. Try again in a minute." },
-      { status: 429 }
-    );
+    const { success } = await ratelimit.limit(`coffee:${ip}`);
+    if (!success) {
+      return NextResponse.json(
+        { error: "Rate limit exceeded. Try again in a minute." },
+        { status: 429 }
+      );
+    }
   }
 
+  const { searchParams } = new URL(req.url);
   const latStr = searchParams.get("lat");
   const lngStr = searchParams.get("lng");
   const radiusStr = searchParams.get("radiusMeters");
@@ -180,27 +213,38 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "lat/lng must be valid numbers" }, { status: 400 });
   }
 
-  // Default 5km; clamp up to 100km (~62 miles)
+  // Places Nearby Search radius max is 50,000 meters.
+  // Default: 5km. Clamp: 500m to 50,000m to keep results valid + costs sane.
   const requested = radiusStr ? Number(radiusStr) : 5000;
   const radiusMeters = Number.isFinite(requested)
-    ? Math.max(500, Math.min(100000, Math.round(requested)))
+    ? Math.max(500, Math.min(50000, Math.round(requested)))
     : 5000;
 
-  const url = new URL("https://maps.googleapis.com/maps/api/place/textsearch/json");
-  url.searchParams.set("query", "coffee shop");
+  // Nearby Search (better relevance than textsearch for this use-case)
+  const url = new URL("https://maps.googleapis.com/maps/api/place/nearbysearch/json");
   url.searchParams.set("location", `${lat},${lng}`);
   url.searchParams.set("radius", String(radiusMeters));
+  url.searchParams.set("type", "cafe");
+  url.searchParams.set("keyword", "coffee");
   url.searchParams.set("key", process.env.GOOGLE_PLACES_API_KEY);
 
-  const rawPages = await fetchTextSearchPages(url, 3);
+  const rawPages = await fetchNearbySearchPages(url, 3);
 
+  // De-dupe by place_id
   const uniqueById = new Map<string, PlaceResult>();
   for (const p of rawPages) {
     if (p?.place_id && !uniqueById.has(p.place_id)) uniqueById.set(p.place_id, p);
   }
 
   const raw = Array.from(uniqueById.values());
-  const filtered = raw.filter((p) => p.name && !isChainName(p.name));
+
+  // Filter: remove obvious chains AND reduce non-coffee bleed
+  const filtered = raw.filter((p) => {
+    if (!p.name) return false;
+    if (isChainName(p.name)) return false;
+    if (!looksLikeCoffeePlace(p.name)) return false;
+    return true;
+  });
 
   const items: CoffeeItem[] = filtered.map((p) => {
     const pLat = p.geometry?.location?.lat ?? null;
@@ -208,7 +252,7 @@ export async function GET(req: Request) {
     const dist =
       pLat != null && pLng != null ? Math.round(haversineMeters(lat, lng, pLat, pLng)) : null;
 
-    const address = p.formatted_address ?? p.vicinity ?? null;
+    const address = p.vicinity ?? p.formatted_address ?? null;
 
     return {
       placeId: p.place_id,
@@ -224,7 +268,7 @@ export async function GET(req: Request) {
     };
   });
 
-  // Stable default order: distance
+  // Default order: distance
   items.sort((a, b) => (a.distanceMeters ?? 9e15) - (b.distanceMeters ?? 9e15));
 
   return NextResponse.json({
@@ -233,4 +277,3 @@ export async function GET(req: Request) {
     items: items.slice(0, 60),
   });
 }
-
