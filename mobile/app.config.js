@@ -45,13 +45,6 @@ export default {
     plugins: [
       'expo-router',
       'expo-location',
-      [
-        'react-native-maps',
-        {
-          googleMapsApiKey: process.env.GOOGLE_MAPS_IOS_SDK_KEY ?? '',
-          androidGoogleMapsApiKey: process.env.GOOGLE_MAPS_ANDROID_SDK_KEY ?? '',
-        },
-      ],
     ],
     experiments: {
       typedRoutes: true,
