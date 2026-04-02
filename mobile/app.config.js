@@ -51,6 +51,9 @@ export default {
     },
     extra: {
       apiBaseUrl: process.env.EXPO_PUBLIC_API_BASE_URL ?? 'http://localhost:3000',
+      eas: {
+        projectId: '592e8740-5314-40f5-af30-218bd84f3fd1',
+      },
     },
   },
 };
