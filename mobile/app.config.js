@@ -45,6 +45,7 @@ export default {
     plugins: [
       'expo-router',
       'expo-location',
+      './plugins/withFmtFix',
     ],
     experiments: {
       typedRoutes: true,
